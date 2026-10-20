@@ -1,44 +1,14 @@
 import pandas as pd
 import streamlit as st
-import pymysql
 import plotly.express as px
-
-# --------------------------------------------------
-# Page Config
-# --------------------------------------------------
-
-st.set_page_config(
-    page_title="PhonePe Transaction Dynamics",
-    page_icon="📊",
-    layout="wide"
-)
+from db import read_sql, get_india_geojson
 
 st.title("📊 Decoding Transaction Dynamics on PhonePe")
-
-# --------------------------------------------------
-# Database Connection
-# --------------------------------------------------
-
-def get_connection():
-    return pymysql.connect(
-        host="localhost",
-        user="root",
-        password="Qwerty@123",
-        database="phonepe"
-    )
-
-
-def read_sql(query):
-    conn = get_connection()
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    return df
-
+st.markdown("In-depth analysis of overall transaction volumes, payment categories, market transitions, and state-level quarterly growth.")
 
 # ==================================================
 # 1️⃣ TOTAL TRANSACTION GROWTH
 # ==================================================
-
 query_total = """
 SELECT year,
 SUM(transcation_amount) AS total_amount,
@@ -59,9 +29,9 @@ fig_count = px.line(
     x="year",
     y="total_count",
     markers=True,
-    title="Transaction Count Growth"
+    title="Transaction Count Growth",
+    labels={"total_count": "Transactions Count", "year": "Year"}
 )
-
 fig_count.update_layout(template="plotly_dark")
 
 fig_amount = px.line(
@@ -69,9 +39,9 @@ fig_amount = px.line(
     x="year",
     y="total_amount",
     markers=True,
-    title="Transaction Amount Growth"
+    title="Transaction Amount Growth",
+    labels={"total_amount": "Total Amount (₹)", "year": "Year"}
 )
-
 fig_amount.update_layout(template="plotly_dark")
 
 with col1:
@@ -80,11 +50,9 @@ with col1:
 with col2:
     st.plotly_chart(fig_amount, use_container_width=True)
 
-
 # ==================================================
 # 2️⃣ PAYMENT CATEGORY DISTRIBUTION
 # ==================================================
-
 query_category = """
 SELECT transcation_type,
 SUM(transcation_count) AS total_transactions,
@@ -137,11 +105,9 @@ with col1:
 with col2:
     st.plotly_chart(fig_cat_amount, use_container_width=True)
 
-
 # ==================================================
 # 3️⃣ PAYMENT CATEGORY TRANSITION (MARKET SHARE)
 # ==================================================
-
 query_transition = """
 SELECT transcation_type, year, quarter,
 SUM(transcation_amount) AS total_amount
@@ -172,23 +138,21 @@ fig_transition = px.area(
     df_transition,
     x="year_quarter",
     y="share_pct",
-    color="transcation_type"
+    color="transcation_type",
+    labels={"year_quarter": "Quarter", "share_pct": "Market Share (%)", "transcation_type": "Category"}
 )
 
 fig_transition.update_layout(
     template="plotly_dark",
     yaxis_title="Market Share (%)"
 )
-
 fig_transition.update_yaxes(ticksuffix="%")
 
 st.plotly_chart(fig_transition, use_container_width=True)
 
-
 # ==================================================
 # 4️⃣ STATE TRANSACTION HEATMAP
 # ==================================================
-
 query_state = """
 SELECT state,
 SUM(transcation_amount) AS total_amount
@@ -198,16 +162,18 @@ GROUP BY state
 
 df_state_map = read_sql(query_state)
 
-st.subheader("🗺 State-wise Transaction Distribution")
+st.subheader("🗺️ State-wise Transaction Distribution")
 
 fig_map = px.choropleth(
     df_state_map,
-    geojson="https://gist.githubusercontent.com/jbrobst/56c13bbbf9d97d187fea01ca62ea5112/raw/e388c4cae20aa53cb5090210a42ebb9b765c0a36/india_states.geojson",
+    geojson=get_india_geojson(),
     featureidkey="properties.ST_NM",
     locations="state",
     color="total_amount",
-    color_continuous_scale="Viridis",
-    hover_data={"total_amount":":,.0f"}
+    color_continuous_scale="Purples",
+    hover_name="state",
+    hover_data={"total_amount": ":,.0f"},
+    labels={"total_amount": "Total Amount (₹)"}
 )
 
 fig_map.update_geos(
@@ -220,7 +186,7 @@ fig_map.update_layout(
     template="plotly_dark",
     coloraxis_colorbar=dict(
         title="Transaction Amount",
-        tickprefix="₹"
+        tickprefix="₹ "
     )
 )
 
@@ -229,7 +195,6 @@ st.plotly_chart(fig_map, use_container_width=True)
 # ==================================================
 # 5️⃣ STATE VS PAYMENT CATEGORY (STACKED BAR)
 # ==================================================
-
 query_heat = """
 SELECT state, transcation_type,
 SUM(transcation_amount) AS total_amount
@@ -239,7 +204,6 @@ GROUP BY state, transcation_type
 
 df_heat = read_sql(query_heat)
 
-# Sort states by total transaction value
 state_order = (
     df_heat.groupby("state")["total_amount"]
     .sum()
@@ -264,23 +228,22 @@ fig_bar = px.bar(
     color="transcation_type",
     orientation="h",
     title="Payment Category Distribution Across States",
+    labels={"total_amount": "Total Amount (₹)", "state": "State", "transcation_type": "Category"}
 )
 
 fig_bar.update_layout(
     template="plotly_dark",
-    height=max(700, len(state_order) * 25),
-    xaxis_title="Transaction Amount",
+    height=max(700, len(state_order) * 22),
+    xaxis_title="Transaction Amount (₹)",
     yaxis_title="State",
     legend_title="Payment Type"
 )
 
 st.plotly_chart(fig_bar, use_container_width=True)
 
-
 # ==================================================
 # 6️⃣ STATE GROWTH ANALYSIS (QoQ)
 # ==================================================
-
 query_state_growth = """
 SELECT state, year, quarter,
 SUM(transcation_amount) AS total_amount
@@ -291,8 +254,7 @@ ORDER BY state, year, quarter
 
 df_state = read_sql(query_state_growth)
 
-df_state = df_state.sort_values(["state","year","quarter"])
-
+df_state = df_state.sort_values(["state", "year", "quarter"])
 df_state["prev_amount"] = df_state.groupby("state")["total_amount"].shift(1)
 
 df_state["growth_pct"] = (
@@ -301,68 +263,50 @@ df_state["growth_pct"] = (
 ) * 100
 
 df_growth = df_state.groupby("state")["growth_pct"].mean().reset_index()
-
 df_growth["growth_pct"] = df_growth["growth_pct"].round(2)
 
-# Sort descending
-df_growth_sorted = df_growth.sort_values("growth_pct", ascending=False)
+df_growth_sorted = df_growth.sort_values("growth_pct", ascending=False).dropna()
 
 top_growing = df_growth_sorted.head(5)
 least_growing = df_growth_sorted.tail(5).sort_values("growth_pct")
 
-st.subheader("🚀 State Growth Analysis")
+st.subheader("🚀 State Growth Analysis (Average QoQ Growth)")
 
 col1, col2 = st.columns(2)
 
-# -----------------------------
-# TOP GROWING
-# -----------------------------
-
 with col1:
-
-    st.markdown("### Top Growing States")
-
+    st.markdown("### Top 5 Growing States")
     st.dataframe(top_growing, hide_index=True)
-
     fig_top = px.bar(
         top_growing,
         x="state",
         y="growth_pct",
         color="growth_pct",
-        title="Top 5 Growing States"
+        color_continuous_scale="Purples",
+        title="Top 5 Growing States (%)",
+        labels={"growth_pct": "Avg QoQ Growth (%)", "state": "State"}
     )
-
     fig_top.update_layout(template="plotly_dark")
-
     st.plotly_chart(fig_top, use_container_width=True)
 
-
-# -----------------------------
-# LEAST GROWING
-# -----------------------------
-
 with col2:
-
-    st.markdown("### Least Growing States")
-
+    st.markdown("### Least 5 Growing States")
     st.dataframe(least_growing, hide_index=True)
-
     fig_low = px.bar(
         least_growing,
         x="state",
         y="growth_pct",
         color="growth_pct",
-        title="Least Growing States"
+        color_continuous_scale="Reds",
+        title="Least Growing States (%)",
+        labels={"growth_pct": "Avg QoQ Growth (%)", "state": "State"}
     )
-
     fig_low.update_layout(template="plotly_dark")
-
     st.plotly_chart(fig_low, use_container_width=True)
 
 # ==================================================
 # 7️⃣ TREND VALIDATION
 # ==================================================
-
 df_state["year_quarter"] = (
     df_state["year"].astype(str)
     + "-Q"
@@ -376,44 +320,37 @@ df_top_plot = df_state[df_state["state"].isin(top_states)]
 df_least_plot = df_state[df_state["state"].isin(least_states)]
 
 st.subheader("📈 Trend for Top Growing States")
-
 fig_top_trend = px.line(
     df_top_plot,
     x="year_quarter",
     y="total_amount",
     color="state",
-    markers=True
+    markers=True,
+    labels={"total_amount": "Total Amount (₹)", "year_quarter": "Quarter"}
 )
-
 fig_top_trend.update_layout(template="plotly_dark")
-
 st.plotly_chart(fig_top_trend, use_container_width=True)
 
-
 st.subheader("📉 Trend for Least Growing States")
-
 fig_low_trend = px.line(
     df_least_plot,
     x="year_quarter",
     y="total_amount",
     color="state",
-    markers=True
+    markers=True,
+    labels={"total_amount": "Total Amount (₹)", "year_quarter": "Quarter"}
 )
-
 fig_low_trend.update_layout(template="plotly_dark")
-
 st.plotly_chart(fig_low_trend, use_container_width=True)
 
 # ==================================================
-# 8 RAW GROWTH DATA
+# 8️⃣ RAW GROWTH DATA
 # ==================================================
-
 st.subheader("📋 State Growth Percentage (All States)")
-
-df_growth_sorted["growth_pct"] = df_growth_sorted["growth_pct"].round(2)
-df_growth_sorted["growth_pct"] = df_growth_sorted["growth_pct"].map("{:.2f}%".format)
+display_growth = df_growth_sorted.copy()
+display_growth["growth_pct"] = display_growth["growth_pct"].map("{:.2f}%".format)
 st.dataframe(
-    df_growth_sorted,
+    display_growth,
     use_container_width=True,
     hide_index=True
 )

@@ -1,61 +1,34 @@
 import streamlit as st
 import pandas as pd
-import pymysql
 import plotly.express as px
+from db import read_sql
 
-# --------------------------------------------------
-# PAGE CONFIG
-# --------------------------------------------------
-
-st.set_page_config(page_title="User Engagement Analysis", layout="wide")
-
-st.title("📊 User Engagement and Growth Strategy")
-
-st.write("""
-This dashboard analyzes PhonePe user engagement across states and districts.
-It helps identify highly engaged regions and growth opportunities.
-""")
-
-# --------------------------------------------------
-# DATABASE CONNECTION
-# --------------------------------------------------
-
-def get_connection():
-    return pymysql.connect(
-        host="localhost",
-        user="root",
-        password="Qwerty@123",
-        database="phonepe"
-    )
-
-conn = get_connection()
+st.title("👥 User Engagement and Regional Growth Strategy")
+st.markdown("Analyze PhonePe registered user counts, app activity patterns, and pinpoint regional engagement hotspots.")
 
 # --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
-
 query = """
 SELECT state, year, quarter, district_name,
 registered_users, app_opens
 FROM map_user
 """
 
-df = pd.read_sql(query, conn)
+df = read_sql(query)
 
 # --------------------------------------------------
 # CREATE PERIOD
 # --------------------------------------------------
-
 df["period"] = df["year"].astype(str) + "-Q" + df["quarter"].astype(str)
 
 # --------------------------------------------------
 # SIDEBAR FILTERS
 # --------------------------------------------------
+st.sidebar.markdown("### 🔍 Engagement Filters")
 
-st.sidebar.header("Filters")
-
-states = ["All"] + sorted(df["state"].unique())
-periods = ["All"] + sorted(df["period"].unique())
+states = ["All"] + sorted(df["state"].dropna().unique().tolist())
+periods = ["All"] + sorted(df["period"].dropna().unique().tolist())
 
 selected_state = st.sidebar.selectbox("Select State", states)
 selected_period = st.sidebar.selectbox("Select Period", periods)
@@ -68,7 +41,6 @@ if selected_state != "All":
 # --------------------------------------------------
 # SNAPSHOT PERIOD
 # --------------------------------------------------
-
 if selected_period == "All":
     snapshot_period = df["period"].max()
 else:
@@ -76,36 +48,35 @@ else:
 
 df_snapshot = df_filtered[df_filtered["period"] == snapshot_period]
 
-st.info(f"Snapshot Period : {snapshot_period}")
+st.info(f"📌 Showing Metrics for Snapshot Period: **{snapshot_period}**")
 
 # --------------------------------------------------
 # KPI METRICS
 # --------------------------------------------------
-
 state_users = df_snapshot.groupby("state")["registered_users"].sum().reset_index()
+total_users = int(state_users["registered_users"].sum()) if not state_users.empty else 0
+total_opens = int(df_snapshot["app_opens"].sum()) if not df_snapshot.empty else 0
+engagement_ratio = round(total_opens / total_users, 2) if total_users > 0 else 0.0
 
-total_users = int(state_users["registered_users"].sum())
-total_opens = int(df_snapshot["app_opens"].sum())
-engagement_ratio = round(total_opens / total_users, 2)
+col1, col2, col3 = st.columns(3)
 
-col1,col2,col3 = st.columns(3)
+col1.metric("👥 Total Registered Users", f"{total_users:,}")
+col2.metric("📲 Total App Opens", f"{total_opens:,}")
+col3.metric("⚡ Engagement Ratio (Opens/User)", engagement_ratio)
 
-col1.metric("Total Registered Users", f"{total_users:,}")
-col2.metric("Total App Opens", f"{total_opens:,}")
-col3.metric("Engagement Ratio", engagement_ratio)
-
-st.markdown("---")
+st.divider()
 
 # --------------------------------------------------
 # USER GROWTH CHARTS
 # --------------------------------------------------
+st.subheader("📈 User Growth and Activity Over Time")
 
-st.subheader("User Growth Over Time")
+trend = df_filtered.groupby("period")[["registered_users", "app_opens"]].sum().reset_index()
+trend["engagement_ratio"] = (
+    trend["app_opens"] / trend["registered_users"].replace(0, float('nan'))
+).fillna(0)
 
-trend = df.groupby("period")[["registered_users","app_opens"]].sum().reset_index()
-trend["engagement_ratio"] = trend["app_opens"] / trend["registered_users"]
-
-col1,col2 = st.columns(2)
+col1, col2 = st.columns(2)
 
 with col1:
     fig1 = px.line(
@@ -113,10 +84,11 @@ with col1:
         x="period",
         y="registered_users",
         markers=True,
-        title="Registered Users Growth"
+        title="Registered Users Growth",
+        labels={"registered_users": "Registered Users", "period": "Quarter"}
     )
-    fig1.update_layout(template="plotly_dark",height=420)
-    st.plotly_chart(fig1,use_container_width=True)
+    fig1.update_layout(template="plotly_dark", height=400)
+    st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
     fig2 = px.line(
@@ -124,144 +96,112 @@ with col2:
         x="period",
         y="app_opens",
         markers=True,
-        title="App Opens Growth"
+        title="App Opens Growth",
+        labels={"app_opens": "App Opens", "period": "Quarter"}
     )
-    fig2.update_layout(template="plotly_dark",height=420)
-    st.plotly_chart(fig2,use_container_width=True)
+    fig2.update_layout(template="plotly_dark", height=400)
+    st.plotly_chart(fig2, use_container_width=True)
 
-# Full width ratio chart
-
+# Engagement ratio chart
 fig3 = px.line(
     trend,
     x="period",
     y="engagement_ratio",
     markers=True,
-    title="Engagement Ratio Growth"
+    title="Quarterly Engagement Ratio (App Opens per User)",
+    labels={"engagement_ratio": "Ratio", "period": "Quarter"}
 )
+fig3.update_layout(template="plotly_dark", height=380)
+st.plotly_chart(fig3, use_container_width=True)
 
-fig3.update_layout(template="plotly_dark",height=420)
-
-st.plotly_chart(fig3,use_container_width=True)
-
-st.markdown("---")
+st.divider()
 
 # --------------------------------------------------
 # STATE ANALYSIS
 # --------------------------------------------------
+st.subheader("🗺️ State-wise User Engagement")
 
-st.subheader("State-wise User Metrics")
-
-state_analysis = df_snapshot.groupby("state")[["registered_users","app_opens"]].sum().reset_index()
-
+state_analysis = df_snapshot.groupby("state")[["registered_users", "app_opens"]].sum().reset_index()
 state_analysis["engagement_ratio"] = (
-    state_analysis["app_opens"] /
-    state_analysis["registered_users"]
-)
+    state_analysis["app_opens"] / state_analysis["registered_users"].replace(0, float('nan'))
+).fillna(0)
 
-col1,col2 = st.columns(2)
+col1, col2 = st.columns(2)
 
 with col1:
     fig4 = px.bar(
-        state_analysis.sort_values("registered_users",ascending=False),
+        state_analysis.sort_values("registered_users", ascending=False).head(15),
         x="state",
         y="registered_users",
-        title="Registered Users by State"
+        color="registered_users",
+        color_continuous_scale="Purples",
+        title="Top 15 States by Registered Users",
+        labels={"registered_users": "Users", "state": "State"}
     )
-    fig4.update_layout(template="plotly_dark",height=420)
+    fig4.update_layout(template="plotly_dark", height=420)
     fig4.update_xaxes(tickangle=45)
-    st.plotly_chart(fig4,use_container_width=True)
+    st.plotly_chart(fig4, use_container_width=True)
 
 with col2:
     fig5 = px.bar(
-        state_analysis.sort_values("app_opens",ascending=False),
+        state_analysis.sort_values("app_opens", ascending=False).head(15),
         x="state",
         y="app_opens",
-        title="App Opens by State"
+        color="app_opens",
+        color_continuous_scale="Purples",
+        title="Top 15 States by App Opens",
+        labels={"app_opens": "App Opens", "state": "State"}
     )
-    fig5.update_layout(template="plotly_dark",height=420)
+    fig5.update_layout(template="plotly_dark", height=420)
     fig5.update_xaxes(tickangle=45)
-    st.plotly_chart(fig5,use_container_width=True)
-
-# Full width ratio chart
-
-fig6 = px.bar(
-    state_analysis.sort_values("engagement_ratio",ascending=False),
-    x="state",
-    y="engagement_ratio",
-    title="Engagement Ratio by State"
-)
-
-fig6.update_layout(template="plotly_dark",height=420)
-fig6.update_xaxes(tickangle=45)
-
-st.plotly_chart(fig6,use_container_width=True)
-
-st.markdown("---")
+    st.plotly_chart(fig5, use_container_width=True)
 
 # --------------------------------------------------
 # DISTRICT ANALYSIS
 # --------------------------------------------------
+st.subheader("📍 District-Level Leaders")
 
-st.subheader("Top Engaged Districts")
-
-district_analysis = df_snapshot.groupby("district_name")[["registered_users","app_opens"]].sum().reset_index()
-
+district_analysis = df_snapshot.groupby("district_name")[["registered_users", "app_opens"]].sum().reset_index()
 district_analysis["engagement_ratio"] = (
-    district_analysis["app_opens"] /
-    district_analysis["registered_users"]
-)
+    district_analysis["app_opens"] / district_analysis["registered_users"].replace(0, float('nan'))
+).fillna(0)
 
-col1,col2 = st.columns(2)
+col1, col2 = st.columns(2)
 
 with col1:
-    top_users = district_analysis.sort_values("registered_users",ascending=False).head(10)
-
+    top_users = district_analysis.sort_values("registered_users", ascending=False).head(10)
     fig7 = px.bar(
         top_users,
         x="district_name",
         y="registered_users",
-        title="Top 10 Districts by Users"
+        color="registered_users",
+        color_continuous_scale="Purples",
+        title="Top 10 Districts by Users",
+        labels={"registered_users": "Registered Users", "district_name": "District"}
     )
-    fig7.update_layout(template="plotly_dark",height=420)
+    fig7.update_layout(template="plotly_dark", height=420)
     fig7.update_xaxes(tickangle=45)
-    st.plotly_chart(fig7,use_container_width=True)
+    st.plotly_chart(fig7, use_container_width=True)
 
 with col2:
-    top_opens = district_analysis.sort_values("app_opens",ascending=False).head(10)
-
+    top_opens = district_analysis.sort_values("app_opens", ascending=False).head(10)
     fig8 = px.bar(
         top_opens,
         x="district_name",
         y="app_opens",
-        title="Top 10 Districts by App Opens"
+        color="app_opens",
+        color_continuous_scale="Purples",
+        title="Top 10 Districts by App Opens",
+        labels={"app_opens": "App Opens", "district_name": "District"}
     )
-    fig8.update_layout(template="plotly_dark",height=420)
+    fig8.update_layout(template="plotly_dark", height=420)
     fig8.update_xaxes(tickangle=45)
-    st.plotly_chart(fig8,use_container_width=True)
-
-# Full width ratio
-
-top_ratio = district_analysis.sort_values("engagement_ratio",ascending=False).head(10)
-
-fig9 = px.bar(
-    top_ratio,
-    x="district_name",
-    y="engagement_ratio",
-    title="Top 10 Districts by Engagement Ratio"
-)
-
-fig9.update_layout(template="plotly_dark",height=420)
-fig9.update_xaxes(tickangle=45)
-
-st.plotly_chart(fig9,use_container_width=True)
-
-st.markdown("---")
+    st.plotly_chart(fig8, use_container_width=True)
 
 # --------------------------------------------------
 # OPPORTUNITY ANALYSIS
 # --------------------------------------------------
-
-st.subheader("User Engagement Opportunity Analysis")
+st.subheader("🎯 User Engagement Opportunity Matrix")
 
 fig10 = px.scatter(
     state_analysis,
@@ -270,42 +210,27 @@ fig10 = px.scatter(
     size="registered_users",
     color="engagement_ratio",
     hover_name="state",
-    color_continuous_scale="viridis",
-    size_max=60,
-    title="Users vs Engagement Opportunity"
+    color_continuous_scale="Viridis",
+    size_max=45,
+    title="State Registered Users vs App Opens (Size = Users, Color = Engagement)",
+    labels={"registered_users": "Registered Users", "app_opens": "App Opens", "engagement_ratio": "Engagement"}
 )
-
-fig10.update_layout(
-    template="plotly_dark",
-    height=550
-)
-
-st.plotly_chart(fig10,use_container_width=True)
-
-st.markdown("---")
+fig10.update_layout(template="plotly_dark", height=520)
+st.plotly_chart(fig10, use_container_width=True)
 
 # --------------------------------------------------
 # SNAPSHOT TABLE
 # --------------------------------------------------
-
-st.subheader("📋 Engagement Snapshot Table")
+st.subheader("📋 Engagement Snapshot Data")
 
 eng_table = df_snapshot.groupby(
-["state","district_name","period"]
-)[["registered_users","app_opens"]].sum().reset_index()
+    ["state", "district_name", "period"]
+)[["registered_users", "app_opens"]].sum().reset_index()
 
 eng_table["engagement_ratio"] = (
-eng_table["app_opens"] /
-eng_table["registered_users"]
-)
+    eng_table["app_opens"] / eng_table["registered_users"].replace(0, float('nan'))
+).round(2).fillna(0)
 
-eng_table = eng_table.sort_values("engagement_ratio",ascending=False)
+eng_table = eng_table.sort_values("engagement_ratio", ascending=False)
 
-st.dataframe(eng_table,use_container_width=True)
-
-# --------------------------------------------------
-# FOOTER
-# --------------------------------------------------
-
-st.markdown("---")
-st.caption("PhonePe User Engagement Dashboard")
+st.dataframe(eng_table, use_container_width=True, hide_index=True)
